@@ -1,0 +1,7 @@
+{
+    "rust-analyzer.cargo.target": "x86_64-unknown-none",
+    "rust-analyzer.cargo.extraArgs": ["-Zbuild-std=core,compiler_builtins"],
+    "rust-analyzer.cargo.extraEnv": {
+        "RUSTUP_TOOLCHAIN": "nightly"
+    }
+}
