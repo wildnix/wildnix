@@ -12,3 +12,9 @@ panic = "abort"
 
 [profile.dev]
 panic = "abort"
+
+[[bin]]
+name = "wildnix"
+path = "src/main.rs"
+test = false
+bench = false

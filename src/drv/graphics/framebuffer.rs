@@ -1,13 +1,13 @@
 use super::Font;
 
 pub struct Framebuffer {
-    addr: *mut u8,
-    pitch: usize,
-    bpp: usize,
-    width: usize,
-    height: usize,
-    cursor_x: usize,
-    cursor_y: usize,
+    pub addr: *mut u8,
+    pub pitch: usize,
+    pub bpp: usize,
+    pub width: usize,
+    pub height: usize,
+    pub cursor_x: usize,
+    pub cursor_y: usize,
 }
 
 impl Framebuffer {
@@ -35,14 +35,35 @@ impl Framebuffer {
                 self.put_pixel(x, y, color);
             }
         }
+
         self.cursor_x = 0;
         self.cursor_y = 0;
     }
 
     pub unsafe fn put_pixel(&mut self, x: usize, y: usize, color: u32) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
+
         let offset = y * self.pitch + x * self.bpp;
-        let p = self.addr.add(offset) as *mut u32;
-        *p = color;
+        let p = unsafe { self.addr.add(offset) };
+
+        unsafe {
+            match self.bpp {
+                4 => {
+                    p.add(0).write_volatile((color & 0xFF) as u8);
+                    p.add(1).write_volatile(((color >> 8) & 0xFF) as u8);
+                    p.add(2).write_volatile(((color >> 16) & 0xFF) as u8);
+                    p.add(3).write_volatile(((color >> 24) & 0xFF) as u8);
+                }
+                3 => {
+                    p.add(0).write_volatile((color & 0xFF) as u8);
+                    p.add(1).write_volatile(((color >> 8) & 0xFF) as u8);
+                    p.add(2).write_volatile(((color >> 16) & 0xFF) as u8);
+                }
+                _ => {}
+            }
+        }
     }
 
     unsafe fn scroll(&mut self, font: &Font, bg: u32) {
@@ -50,16 +71,21 @@ impl Framebuffer {
         let scroll_bytes = line_h * self.pitch;
         let total_bytes = self.height * self.pitch;
 
-        core::ptr::copy(
-            self.addr.add(scroll_bytes),
-            self.addr,
-            total_bytes - scroll_bytes,
-        );
+        unsafe {
+            core::ptr::copy(
+                self.addr.add(scroll_bytes),
+                self.addr,
+                total_bytes - scroll_bytes,
+            );
+        }
 
         let last_row_y = self.height - line_h;
+
         for y in last_row_y..self.height {
             for x in 0..self.width {
-                self.put_pixel(x, y, bg);
+                unsafe {
+                    self.put_pixel(x, y, bg);
+                }
             }
         }
 
@@ -74,14 +100,17 @@ impl Framebuffer {
         let glyph = font.glyph(c);
         let height = font.height();
         let width = font.width();
-        let bytes_per_row = (width + 7) / 8;
+        let bytes_per_row = width.div_ceil(8);
 
         for row in 0..height {
             for col in 0..width {
-                let byte = *glyph.add(row * bytes_per_row + col / 8);
+                let byte = unsafe { *glyph.add(row * bytes_per_row + col / 8) };
                 let bit = 0x80 >> (col % 8);
                 let color = if byte & bit != 0 { fg } else { bg };
-                self.put_pixel(cx + col, cy + row, color);
+
+                unsafe {
+                    self.put_pixel(cx + col, cy + row, color);
+                }
             }
         }
     }
@@ -105,29 +134,41 @@ impl Framebuffer {
                 }
 
                 if self.cursor_y + glyph_h > self.height {
-                    self.scroll(font, bg);
+                    unsafe {
+                        self.scroll(font, bg);
+                    }
                 }
 
-                self.draw_char(font, c, self.cursor_x, self.cursor_y, fg, bg);
+                unsafe {
+                    self.draw_char(font, c, self.cursor_x, self.cursor_y, fg, bg);
+                }
+
                 self.cursor_x += glyph_w;
             }
         }
 
         if self.cursor_y + glyph_h > self.height {
-            self.scroll(font, bg);
+            unsafe {
+                self.scroll(font, bg);
+            }
         }
     }
 
     pub unsafe fn write_str(&mut self, font: &Font, s: &[u8], fg: u32, bg: u32) {
         for &c in s {
-            self.write_char(font, c, fg, bg);
+            unsafe {
+                self.write_char(font, c, fg, bg);
+            }
         }
     }
 
     pub unsafe fn draw_str(&mut self, font: &Font, s: &[u8], x: usize, y: usize, fg: u32, bg: u32) {
         let glyph_w = font.width();
+
         for (i, &c) in s.iter().enumerate() {
-            self.draw_char(font, c, x + i * glyph_w, y, fg, bg);
+            unsafe {
+                self.draw_char(font, c, x + i * glyph_w, y, fg, bg);
+            }
         }
     }
 }

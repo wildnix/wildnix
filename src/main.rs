@@ -4,11 +4,26 @@
 
 mod arch;
 mod drv;
+mod mem;
+mod shell;
 
-use limine::request::{ExecutableAddressRequest, FramebufferRequest, HhdmRequest};
+#[macro_use]
+mod macros;
+
+pub mod panic;
+
+extern crate alloc;
+
+use alloc::boxed::Box;
 use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
 
+use limine::request::{ExecutableAddressRequest, FramebufferRequest, HhdmRequest, MemmapRequest};
+
+use crate::drv::graphics::Color;
+
 static FONT_DATA: &[u8] = include_bytes!("../assets/ter-u16n.psf");
+
+static CONSOLE: drv::console::Console = drv::console::Console;
 
 #[used]
 #[unsafe(link_section = ".limine_reqs_start")]
@@ -28,6 +43,10 @@ static HHDM_REQUEST: HhdmRequest = HhdmRequest::new();
 
 #[used]
 #[unsafe(link_section = ".limine_reqs")]
+pub static MEMORY_MAP_REQUEST: MemmapRequest = MemmapRequest::new();
+
+#[used]
+#[unsafe(link_section = ".limine_reqs")]
 static EXECUTABLE_ADDRESS_REQUEST: ExecutableAddressRequest = ExecutableAddressRequest::new();
 
 #[used]
@@ -36,29 +55,68 @@ static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
 
 #[no_mangle]
 unsafe extern "C" fn kmain() -> ! {
-    drv::serial::write(b"kmain reached\nAbout to init arch\n");
+    drv::serial::write(b"kmain reached\n");
 
-    crate::arch::init();
-    drv::serial::write(b"arch init done\n");
     if BASE_REVISION.is_supported() {
         drv::serial::write(b"base revision ok\n");
     } else {
-        drv::serial::write(b"base revision NOT supported, continuing anyway\n");
+        drv::serial::write(b"base revision NOT supported\n");
     }
 
-    if let Some(_) = HHDM_REQUEST.response() {
-        drv::serial::write(b"hhdm ok\n");
-    } else {
-        drv::serial::write(b"no hhdm\n");
-    }
+    drv::serial::write(b"getting hhdm\n");
 
-    // Main display code
+    let hhdm = match HHDM_REQUEST.response() {
+        Some(response) => {
+            drv::serial::write(b"hhdm ok\n");
+            drv::serial::write(b"hhdm offset = ");
+            drv::serial::write_hex(response.offset);
+            drv::serial::write(b"\n");
+
+            response.offset
+        }
+        None => {
+            drv::serial::write(b"hhdm none\n");
+            panic!("no hhdm response");
+        }
+    };
+
+    drv::serial::write(b"about to init arch\n");
+    arch::init();
+    unsafe {
+        let cs: u16;
+        core::arch::asm!("mov {0:x}, cs", out(reg) cs);
+        drv::serial::write(b"CS = ");
+        drv::serial::write_hex(cs as u64);
+        drv::serial::write(b"\n");
+
+        let ss: u16;
+        core::arch::asm!("mov {0:x}, ss", out(reg) ss);
+        drv::serial::write(b"SS = ");
+        drv::serial::write_hex(ss as u64);
+        drv::serial::write(b"\n");
+    }
+    drv::serial::write(b"kernel done\n");
+    drv::serial::write(b"arch init done\n");
+
+    drv::serial::write(b"about to init mem\n");
+    mem::init(hhdm);
+    drv::serial::write(b"mem init done\n");
+
+    let x = Box::new(1337u64);
+
+    drv::serial::write(b"heap test value = ");
+    drv::serial::write_hex(*x);
+    drv::serial::write(b"\n");
+
     drv::serial::write(b"checking framebuffer\n");
 
     if let Some(fb_response) = FRAMEBUFFER_REQUEST.response() {
         drv::serial::write(b"got framebuffer response\n");
+
         if let Some(fb) = fb_response.framebuffers().first() {
-            drv::serial::write(b"got first fb\n");
+            drv::serial::write(b"got first framebuffer\n");
+
+            let font = drv::graphics::Font::from_bytes(FONT_DATA.as_ptr()).expect("font");
 
             let mut display = drv::graphics::Framebuffer::new(
                 fb.address() as *mut u8,
@@ -67,40 +125,60 @@ unsafe extern "C" fn kmain() -> ! {
                 fb.width as usize,
                 fb.height as usize,
             );
+
+            display.clear(Color::Black as u32);
+
+            drv::console::init(display, font);
+
             drv::serial::write(b"framebuffer created\n");
 
             let font = match drv::graphics::Font::from_bytes(FONT_DATA.as_ptr()) {
-                Some(f) => {
+                Some(font) => {
                     drv::serial::write(b"font ok\n");
-                    f
+                    font
                 }
                 None => {
                     drv::serial::write(b"font invalid\n");
-                    panic!("invalid font")
+                    panic!("invalid font");
                 }
             };
-
-            display.clear(0x00000000);
-            drv::serial::write(b"cleared\n");
-
-            display.write_str(&font, b"Wildnix\n", 0xFFFFFFFF, 0x00000000);
+            println!(
+                r#"
+          ,--.,--.
+ ,-.     /  //  /,-.    ,--.   ,--.,--.,--.   ,--.,--.  ,--.,--.,--.   ,--.
+ \  \   /  //  //  /    |  |   |  |`--'|  | ,-|  ||  ,'.|  ||  | \  `.'  /
+  \  \ /  //  //  /     |  |.'.|  |,--.|  |' .-. ||  |' '  ||  |  .'    \
+  /  //  //  / \  \     |   ,'.   ||  ||  |\ `-' ||  | `   ||  | /  .'.  \
+ /  //  //  /   \  \    '--'   '--'`--'`--' `---' `--'  `--'`--''--'   '--'
+ `-'`--'`--'     `-'
+            "#
+            );
+            println!("WildNIX Operating System v{}", env!("CARGO_PKG_VERSION"));
+            println!("Hello World!");
+            println!("Value = {}", 1337);
             drv::serial::write(b"text written\n");
         } else {
-            drv::serial::write(b"no framebuffers in response\n");
+            drv::serial::write(b"no framebuffer found\n");
+        }
+        unsafe {
+            let rsp: u64;
+            core::arch::asm!("mov {}, rsp", out(reg) rsp);
+            drv::serial::write(b"rsp = ");
+            drv::serial::write_hex(rsp);
+            drv::serial::write(b"\n");
+        }
+        let mut shell = shell::Shell::new();
+
+        loop {
+            shell.tick();
+            unsafe { core::arch::asm!("hlt") };
         }
     } else {
         drv::serial::write(b"no framebuffer response\n");
     }
+    drv::serial::write(b"kernel done\n");
 
     loop {
         core::arch::asm!("hlt");
-    }
-}
-
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    unsafe { drv::serial::write(b"PANIC\n") };
-    loop {
-        unsafe { core::arch::asm!("hlt") };
     }
 }

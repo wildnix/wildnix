@@ -52,37 +52,38 @@ struct GdtDescriptor {
     offset: u64,
 }
 
-static GDT: [GdtEntry; 3] = [GdtEntry::null(), GdtEntry::code64(), GdtEntry::data64()];
+static mut GDT: [GdtEntry; 3] = [GdtEntry::null(), GdtEntry::code64(), GdtEntry::data64()];
 
 static mut GDT_DESCRIPTOR: GdtDescriptor = GdtDescriptor { size: 0, offset: 0 };
 
 pub fn init() {
     unsafe {
-        GDT_DESCRIPTOR = GdtDescriptor {
+        let descriptor = GdtDescriptor {
             size: (core::mem::size_of::<[GdtEntry; 3]>() - 1) as u16,
             offset: GDT.as_ptr() as u64,
         };
 
         crate::drv::serial::write(b"gdt: loading descriptor\n");
 
+        asm!("lgdt [{gdt}]", gdt = in(reg) &descriptor);
+
+        reload_cs();
+
         asm!(
-            "lgdt [{0}]",
-            in(reg) &GDT_DESCRIPTOR,
-            options(nostack)
+            "mov ax, 0x10",
+            "mov ds, ax",
+            "mov es, ax",
+            "mov fs, ax",
+            "mov gs, ax",
+            "mov ss, ax",
+            out("ax") _,
         );
 
-        crate::drv::serial::write(b"gdt: lgdt done\n");
-        reload_cs();
         crate::drv::serial::write(b"gdt: segments reloaded\n");
     }
 }
 
 #[unsafe(naked)]
 unsafe extern "C" fn reload_cs() {
-    core::arch::naked_asm!(
-        "pop rdi",   // save return address
-        "push 0x08", // CS
-        "push rdi",  // return address
-        "retfq",
-    );
+    core::arch::naked_asm!("pop rdi", "push 0x08", "push rdi", "retfq",);
 }
