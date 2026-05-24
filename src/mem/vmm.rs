@@ -8,6 +8,10 @@ const PRESENT: u64 = 1 << 0;
 const WRITABLE: u64 = 1 << 1;
 const HUGE: u64 = 1 << 7;
 
+const USER: u64 = 1 << 2;
+
+pub const FLAG_USER: u64 = USER;
+
 static mut HHDM_OFFSET: u64 = 0;
 
 #[repr(transparent)]
@@ -69,7 +73,7 @@ unsafe fn get_or_create_table(entry: &mut u64) -> *mut PageTable {
             }
         }
 
-        *entry = phys | PRESENT | WRITABLE;
+        *entry = phys | PRESENT | WRITABLE | USER;
     }
 
     phys_to_virt(*entry & 0x000f_ffff_ffff_f000)

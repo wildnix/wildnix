@@ -36,21 +36,26 @@ pub fn _clear() {
 
 pub fn write_bytes(bytes: &[u8]) {
     unsafe {
-        if let (Some(fb), Some(font)) = (
-            (&raw mut FRAMEBUFFER).as_mut().and_then(Option::as_mut),
-            (&raw const FONT).as_ref().and_then(Option::as_ref),
-        ) {
-            crate::drv::serial::write(b"fb addr=");
-            crate::drv::serial::write_hex(fb.addr as u64);
-            crate::drv::serial::write(b" pitch=");
-            crate::drv::serial::write_hex(fb.pitch as u64);
-            crate::drv::serial::write(b" w=");
-            crate::drv::serial::write_hex(fb.width as u64);
-            crate::drv::serial::write(b" h=");
-            crate::drv::serial::write_hex(fb.height as u64);
-            crate::drv::serial::write(b"\n");
-            fb.write_str(font, bytes, Color::White as u32, Color::Black as u32);
+        crate::drv::serial::write(bytes);
+
+        let fb_ptr = (&raw mut FRAMEBUFFER).as_mut();
+        let font_ptr = (&raw const FONT).as_ref();
+
+        if fb_ptr.is_none() || font_ptr.is_none() {
+            return;
         }
+
+        let fb_opt = fb_ptr.unwrap();
+        let font_opt = font_ptr.unwrap();
+
+        if fb_opt.is_none() || font_opt.is_none() {
+            return;
+        }
+
+        let fb = fb_opt.as_mut().unwrap();
+        let font = font_opt.as_ref().unwrap();
+
+        fb.write_str(font, bytes, Color::White as u32, Color::Black as u32);
     }
 }
 

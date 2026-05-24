@@ -4,8 +4,9 @@
 
 mod arch;
 mod drv;
+mod elf;
 mod mem;
-mod shell;
+mod user;
 
 #[macro_use]
 mod macros;
@@ -22,6 +23,8 @@ use limine::request::{ExecutableAddressRequest, FramebufferRequest, HhdmRequest,
 use crate::drv::graphics::Color;
 
 static FONT_DATA: &[u8] = include_bytes!("../assets/ter-u16n.psf");
+
+static USER_ELF: &[u8] = include_bytes!("../userland/init.elf");
 
 static CONSOLE: drv::console::Console = drv::console::Console;
 
@@ -102,12 +105,6 @@ unsafe extern "C" fn kmain() -> ! {
     mem::init(hhdm);
     drv::serial::write(b"mem init done\n");
 
-    let x = Box::new(1337u64);
-
-    drv::serial::write(b"heap test value = ");
-    drv::serial::write_hex(*x);
-    drv::serial::write(b"\n");
-
     drv::serial::write(b"checking framebuffer\n");
 
     if let Some(fb_response) = FRAMEBUFFER_REQUEST.response() {
@@ -167,15 +164,29 @@ unsafe extern "C" fn kmain() -> ! {
             drv::serial::write_hex(rsp);
             drv::serial::write(b"\n");
         }
-        let mut shell = shell::Shell::new();
-
-        loop {
-            shell.tick();
-            unsafe { core::arch::asm!("hlt") };
-        }
     } else {
         drv::serial::write(b"no framebuffer response\n");
     }
+
+    let loaded = unsafe { elf::load(USER_ELF).expect("failed to load user ELF") };
+
+    unsafe {
+        arch::x86_64::usermode::enter_usermode(loaded.entry, user::USER_STACK_TOP);
+    }
+    unsafe {
+        user::setup_user();
+
+        crate::drv::serial::write(b"entering usermode\n");
+
+        arch::x86_64::usermode::enter_usermode(user::USER_CODE_ADDR, user::USER_STACK_TOP);
+    }
+
+    let x = Box::new(1337u64);
+
+    drv::serial::write(b"heap test value = ");
+    drv::serial::write_hex(*x);
+    drv::serial::write(b"\n");
+
     drv::serial::write(b"kernel done\n");
 
     loop {

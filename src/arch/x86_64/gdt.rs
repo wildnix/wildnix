@@ -44,6 +44,27 @@ impl GdtEntry {
             base_high: 0,
         }
     }
+    const fn user_code64() -> Self {
+        Self {
+            limit_low: 0xFFFF,
+            base_low: 0,
+            base_mid: 0,
+            access: 0b11111010,      // present | ring3 | code | readable
+            granularity: 0b10101111, // long mode
+            base_high: 0,
+        }
+    }
+
+    const fn user_data64() -> Self {
+        Self {
+            limit_low: 0xFFFF,
+            base_low: 0,
+            base_mid: 0,
+            access: 0b11110010, // present | ring3 | data | writable
+            granularity: 0b11001111,
+            base_high: 0,
+        }
+    }
 }
 
 #[repr(C, packed)]
@@ -52,14 +73,23 @@ struct GdtDescriptor {
     offset: u64,
 }
 
-static mut GDT: [GdtEntry; 3] = [GdtEntry::null(), GdtEntry::code64(), GdtEntry::data64()];
+static mut GDT: [GdtEntry; 5] = [
+    GdtEntry::null(),        // 0x00
+    GdtEntry::code64(),      // 0x08 kernel code
+    GdtEntry::data64(),      // 0x10 kernel data
+    GdtEntry::user_data64(), // 0x18 | 3 = 0x1B
+    GdtEntry::user_code64(), // 0x20 | 3 = 0x23
+];
 
-static mut GDT_DESCRIPTOR: GdtDescriptor = GdtDescriptor { size: 0, offset: 0 };
+static mut GDT_DESCRIPTOR: GdtDescriptor = GdtDescriptor {
+    size: (core::mem::size_of::<[GdtEntry; 5]>() - 1) as u16,
+    offset: 0,
+};
 
 pub fn init() {
     unsafe {
         let descriptor = GdtDescriptor {
-            size: (core::mem::size_of::<[GdtEntry; 3]>() - 1) as u16,
+            size: (core::mem::size_of::<[GdtEntry; 5]>() - 1) as u16,
             offset: GDT.as_ptr() as u64,
         };
 

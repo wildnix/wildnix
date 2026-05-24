@@ -92,10 +92,6 @@ pub fn init() {
         asm!("lidt [{0}]", in(reg) &IDT_DESCRIPTOR, options(nostack));
 
         crate::drv::serial::write(b"idt: lidt done\n");
-
-        asm!("sti");
-
-        crate::drv::serial::write(b"idt: interrupts enabled\n");
     }
 }
 
@@ -133,7 +129,7 @@ macro_rules! exception_handler_err {
     };
 }
 
-extern "x86-interrupt" fn handler_pf(_frame: &InterruptStackFrame, error: u64) {
+extern "x86-interrupt" fn handler_pf(_frame: InterruptStackFrame, error: u64) {
     unsafe {
         let cr2: u64;
         core::arch::asm!("mov {}, cr2", out(reg) cr2);
@@ -184,7 +180,7 @@ extern "x86-interrupt" fn handler_pf(_frame: &InterruptStackFrame, error: u64) {
     }
 }
 
-extern "x86-interrupt" fn handler_irq1_keyboard(_frame: &InterruptStackFrame) {
+extern "x86-interrupt" fn handler_irq1_keyboard(_frame: InterruptStackFrame) {
     unsafe {
         let scancode = crate::drv::keyboard::read_scancode_raw();
         crate::drv::serial::write(b"before eoi\n");
@@ -193,7 +189,7 @@ extern "x86-interrupt" fn handler_irq1_keyboard(_frame: &InterruptStackFrame) {
     }
 }
 
-extern "x86-interrupt" fn handler_spurious(_frame: &InterruptStackFrame) {
+extern "x86-interrupt" fn handler_spurious(_frame: InterruptStackFrame) {
     unsafe {
         crate::arch::interrupts::pic_eoi(0);
     }
