@@ -16,7 +16,7 @@ static USER_CODE: &[u8] = &[
     0xEB, 0xF9, // jmp -7
 ];
 
-pub unsafe fn setup_user() {
+pub unsafe fn setup_user_stack() {
     let code_phys = unsafe { mem::pmm::alloc().expect("failed to allocate user code page") };
 
     let stack_phys = unsafe { mem::pmm::alloc().expect("failed to allocate user stack page") };

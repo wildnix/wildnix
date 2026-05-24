@@ -1,11 +1,6 @@
-use core::arch::asm;
-
-pub const USER_DATA_SELECTOR: u64 = 0x1B;
-pub const USER_CODE_SELECTOR: u64 = 0x23;
-
 pub unsafe fn enter_usermode(entry: u64, stack_top: u64) -> ! {
     unsafe {
-        asm!(
+        core::arch::asm!(
             "cli",
 
             "mov ax, {user_data:x}",
@@ -16,18 +11,17 @@ pub unsafe fn enter_usermode(entry: u64, stack_top: u64) -> ! {
             "push {stack}",
             "pushfq",
             "pop rax",
-            "or rax, 0x200",
+            "and rax, ~0x200",
             "push rax",
             "push {user_code}",
             "push {entry}",
             "iretq",
 
-            user_data = in(reg) USER_DATA_SELECTOR,
-            user_code = in(reg) USER_CODE_SELECTOR,
+            user_data = in(reg) 0x1Bu64,
+            user_code = in(reg) 0x23u64,
             stack = in(reg) stack_top,
             entry = in(reg) entry,
-
-            options(noreturn)
+            options(noreturn),
         );
     }
 }

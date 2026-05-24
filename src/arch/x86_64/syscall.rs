@@ -1,5 +1,7 @@
 use core::arch::{asm, naked_asm};
 
+use crate::println;
+
 const IA32_EFER: u32 = 0xC000_0080;
 const IA32_STAR: u32 = 0xC000_0081;
 const IA32_LSTAR: u32 = 0xC000_0082;
@@ -10,6 +12,7 @@ const EFER_SCE: u64 = 1;
 pub const SYS_DEBUG: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
 pub const SYS_READ_KEY: u64 = 2;
+pub const SYS_EXIT: u64 = 3;
 
 static mut SYSCALL_STACK: [u8; 4096 * 4] = [0; 4096 * 4];
 
@@ -150,6 +153,8 @@ extern "C" fn syscall_handler(
 
         SYS_READ_KEY => sys_read_key(),
 
+        SYS_EXIT => sys_exit(arg1),
+
         _ => u64::MAX,
     }
 }
@@ -170,5 +175,20 @@ fn sys_read_key() -> u64 {
     match crate::drv::keyboard::read_char() {
         Some(c) => c as u64,
         None => 0,
+    }
+}
+
+fn sys_exit(code: u64) -> u64 {
+    unsafe {
+        crate::drv::serial::write(b"process exited with code ");
+        crate::drv::serial::write_hex(code);
+        crate::drv::serial::write(b"\n");
+        println!("process exited with code {}", code);
+    }
+
+    loop {
+        unsafe {
+            core::arch::asm!("hlt");
+        }
     }
 }

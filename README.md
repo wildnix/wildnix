@@ -1,5 +1,10 @@
 # WildNIX Kernel
 
+# Clone:
+```bash
+git clone --recurse-submodules https://github.com/wildnix/wildnix
+```
+
 ## Milestones
 
 - [x] `24.05.2026` - The white rectangle of hope

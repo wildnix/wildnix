@@ -1,12 +1,9 @@
 use crate::mem;
 
 const EI_NIDENT: usize = 16;
-
 const PT_LOAD: u32 = 1;
 
-const PF_X: u32 = 1;
 const PF_W: u32 = 2;
-const PF_R: u32 = 4;
 
 const PAGE_SIZE: u64 = 4096;
 
@@ -46,12 +43,12 @@ pub struct LoadedElf {
     pub entry: u64,
 }
 
-fn align_down(value: u64, align: u64) -> u64 {
-    value & !(align - 1)
+fn align_down(v: u64, a: u64) -> u64 {
+    v & !(a - 1)
 }
 
-fn align_up(value: u64, align: u64) -> u64 {
-    (value + align - 1) & !(align - 1)
+fn align_up(v: u64, a: u64) -> u64 {
+    (v + a - 1) & !(a - 1)
 }
 
 unsafe fn read_struct<T: Copy>(data: &[u8], offset: usize) -> Option<T> {
@@ -59,32 +56,22 @@ unsafe fn read_struct<T: Copy>(data: &[u8], offset: usize) -> Option<T> {
         return None;
     }
 
-    let ptr = unsafe { data.as_ptr().add(offset) as *const T };
-    Some(unsafe { core::ptr::read_unaligned(ptr) })
+    Some(core::ptr::read_unaligned(
+        data.as_ptr().add(offset) as *const T
+    ))
 }
 
 pub unsafe fn load(data: &[u8]) -> Option<LoadedElf> {
-    let header: Elf64Header = unsafe { read_struct(data, 0)? };
+    let header: Elf64Header = read_struct(data, 0)?;
 
     if &header.ident[0..4] != b"\x7FELF" {
         return None;
     }
 
-    if header.ident[4] != 2 {
-        return None; // ELFCLASS64
-    }
-
-    if header.ident[5] != 1 {
-        return None; // little endian
-    }
-
-    if header.machine != 0x3E {
-        return None; // x86_64
-    }
-
     for i in 0..header.phnum {
-        let ph_offset = header.phoff as usize + i as usize * header.phentsize as usize;
-        let ph: Elf64ProgramHeader = unsafe { read_struct(data, ph_offset)? };
+        let ph_off = header.phoff as usize + i as usize * header.phentsize as usize;
+
+        let ph: Elf64ProgramHeader = read_struct(data, ph_off)?;
 
         if ph.p_type != PT_LOAD {
             continue;
@@ -99,23 +86,19 @@ pub unsafe fn load(data: &[u8]) -> Option<LoadedElf> {
             flags |= mem::vmm::FLAG_WRITABLE;
         }
 
-        flags |= mem::vmm::FLAG_WRITABLE;
-
         for virt in (seg_start..seg_end).step_by(PAGE_SIZE as usize) {
-            let phys = unsafe { mem::pmm::alloc()? };
+            let phys = mem::pmm::alloc()?;
 
-            unsafe {
-                mem::vmm::map_page(virt, phys, flags);
-            }
+            mem::vmm::map_page(virt, phys, flags | mem::vmm::FLAG_WRITABLE);
 
-            let dst = virt as *mut u8;
+            let page = virt as *mut u8;
 
             for j in 0..PAGE_SIZE {
-                unsafe {
-                    dst.add(j as usize).write_volatile(0);
-                }
+                page.add(j as usize).write_volatile(0);
             }
         }
+
+        let file = &data[ph.offset as usize..(ph.offset + ph.filesz) as usize];
 
         let src_start = ph.offset as usize;
         let src_end = src_start + ph.filesz as usize;
@@ -124,15 +107,21 @@ pub unsafe fn load(data: &[u8]) -> Option<LoadedElf> {
             return None;
         }
 
-        let dst = ph.vaddr as *mut u8;
         let src = &data[src_start..src_end];
+        let dst = ph.vaddr as *mut u8;
 
         for i in 0..src.len() {
-            unsafe {
-                dst.add(i).write_volatile(src[i]);
-            }
+            dst.add(i).write_volatile(src[i]);
         }
+        let b = *(header.entry as *const u8);
+
+        crate::drv::serial::write(b"entry byte = ");
+        crate::drv::serial::write_hex(b as u64);
+        crate::drv::serial::write(b"\n");
+        crate::drv::serial::write(b"loaded segment\n");
     }
+
+    crate::drv::serial::write(b"elf load done\n");
 
     Some(LoadedElf {
         entry: header.entry,

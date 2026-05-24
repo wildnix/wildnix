@@ -1,6 +1,9 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
 set -e
 
-nasm -f elf64 userland/init.asm -o userland/init.o
-ld -nostdlib -static -Ttext=0x400000 -o userland/init.elf userland/init.o
+cd userland/init-rs
+
+cargo build --release --target x86_64-unknown-none
+
+mkdir -p ../../build/userland
+cp target/x86_64-unknown-none/release/init-rs ../../build/userland/init.elf
