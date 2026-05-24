@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 limine = "0.6.3"
-x86_64 = { version = "0.15", default-features = false, features = ["instructions"] }
+x86_64 = { version = "0.15", default-features = false, features = ["instructions", "abi_x86_interrupt"] }
 
 [profile.release]
 panic = "abort"

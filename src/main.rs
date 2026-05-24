@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
+#![feature(abi_x86_interrupt)]
 
+mod arch;
 mod drv;
 
 use limine::request::{ExecutableAddressRequest, FramebufferRequest, HhdmRequest};
@@ -34,8 +36,10 @@ static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
 
 #[no_mangle]
 unsafe extern "C" fn kmain() -> ! {
-    drv::serial::write(b"kmain reached\n");
+    drv::serial::write(b"kmain reached\nAbout to init arch\n");
 
+    crate::arch::init();
+    drv::serial::write(b"arch init done\n");
     if BASE_REVISION.is_supported() {
         drv::serial::write(b"base revision ok\n");
     } else {
