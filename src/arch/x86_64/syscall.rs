@@ -172,9 +172,13 @@ fn sys_write(ptr: u64, len: u64) -> u64 {
 }
 
 fn sys_read_key() -> u64 {
-    match crate::drv::keyboard::read_char() {
-        Some(c) => c as u64,
-        None => 0,
+    // Block until a key is available from the event queue
+    loop {
+        if let Some(c) = crate::drv::keyboard::queue_pop() {
+            return c as u64;
+        }
+        // Wait for keyboard interrupt
+        unsafe { core::arch::asm!("hlt"); }
     }
 }
 
@@ -187,8 +191,6 @@ fn sys_exit(code: u64) -> u64 {
     }
 
     loop {
-        unsafe {
-            core::arch::asm!("hlt");
-        }
+        unsafe { core::arch::asm!("hlt"); }
     }
 }

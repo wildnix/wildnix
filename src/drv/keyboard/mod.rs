@@ -2,8 +2,34 @@ use crate::drv::serial::inb;
 
 const DATA_PORT: u16 = 0x60;
 const STATUS_PORT: u16 = 0x64;
+const KEYBOARD_QUEUE_SIZE: usize = 256;
 
 static mut SHIFT: bool = false;
+static mut KEYBOARD_QUEUE: [u8; KEYBOARD_QUEUE_SIZE] = [0u8; KEYBOARD_QUEUE_SIZE];
+static mut KEYBOARD_QUEUE_HEAD: usize = 0;
+static mut KEYBOARD_QUEUE_TAIL: usize = 0;
+
+pub fn queue_push(c: u8) {
+    unsafe {
+        let next_tail = (KEYBOARD_QUEUE_TAIL + 1) % KEYBOARD_QUEUE_SIZE;
+        if next_tail != KEYBOARD_QUEUE_HEAD {
+            KEYBOARD_QUEUE[KEYBOARD_QUEUE_TAIL] = c;
+            KEYBOARD_QUEUE_TAIL = next_tail;
+        }
+    }
+}
+
+pub fn queue_pop() -> Option<u8> {
+    unsafe {
+        if KEYBOARD_QUEUE_HEAD == KEYBOARD_QUEUE_TAIL {
+            None
+        } else {
+            let c = KEYBOARD_QUEUE[KEYBOARD_QUEUE_HEAD];
+            KEYBOARD_QUEUE_HEAD = (KEYBOARD_QUEUE_HEAD + 1) % KEYBOARD_QUEUE_SIZE;
+            Some(c)
+        }
+    }
+}
 
 pub fn read_scancode() -> Option<u8> {
     unsafe {
@@ -63,10 +89,7 @@ pub fn read_char() -> Option<u8> {
         return None;
     }
 
-    if scancode & 0x80 != 0 && scancode != 0xAA && scancode != 0xB6 {
-        return None;
-    }
-
+    // For now, don't filter releases - let scancode_to_ascii handle it
     scancode_to_ascii(scancode)
 }
 
