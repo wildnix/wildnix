@@ -2,4 +2,5 @@
 
 ## Milestones
 
-- [x] The white rectangle of hope  `24.05.2026`
+- [x] `24.05.2026` - The white rectangle of hope
+- [x] `24.05.2026` - PSF2 Font parsing
