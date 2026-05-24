@@ -113,12 +113,6 @@ pub unsafe fn load(data: &[u8]) -> Option<LoadedElf> {
         for i in 0..src.len() {
             dst.add(i).write_volatile(src[i]);
         }
-        let b = *(header.entry as *const u8);
-
-        crate::drv::serial::write(b"entry byte = ");
-        crate::drv::serial::write_hex(b as u64);
-        crate::drv::serial::write(b"\n");
-        crate::drv::serial::write(b"loaded segment\n");
     }
 
     crate::drv::serial::write(b"elf load done\n");

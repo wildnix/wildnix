@@ -7,11 +7,15 @@ ISO=wildnix-x86_64.iso
 LIMINE_DIR="${LIMINE_DIR:-$HOME/limine-bin}"
 
 if [ ! -d "$LIMINE_DIR" ]; then
+    CWD=$(pwd)
     git clone https://github.com/limine-bootloader/limine.git \
         --branch=v8.x-binary --depth=1 "$LIMINE_DIR"
+    cd "$LIMINE_DIR"
+    make -j$(nproc)
+    cd "$CWD"
 fi
 
-# cargo build
+cargo build
 
 mkdir -p "$ISO_DIR/boot/limine"
 mkdir -p "$ISO_DIR/EFI/BOOT"
