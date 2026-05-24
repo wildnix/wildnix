@@ -127,6 +127,20 @@ impl Framebuffer {
             b'\r' => {
                 self.cursor_x = 0;
             }
+            b'\t' => {
+                let spaces = 4 - (self.cursor_x / glyph_w) % 4;
+                self.cursor_x += spaces * glyph_w;
+            }
+            b'\x08' => {
+                if self.cursor_x >= glyph_w {
+                    self.cursor_x -= glyph_w;
+                } else if self.cursor_y >= glyph_h {
+                    self.cursor_x = (self.width / glyph_w - 1) * glyph_w;
+                    self.cursor_y -= glyph_h;
+                }
+
+                self.clear_char(self.cursor_x, self.cursor_y, glyph_w, glyph_h, bg);
+            }
             _ => {
                 if self.cursor_x + glyph_w > self.width {
                     self.cursor_x = 0;
@@ -154,11 +168,60 @@ impl Framebuffer {
         }
     }
 
-    pub unsafe fn write_str(&mut self, font: &Font, s: &[u8], fg: u32, bg: u32) {
-        for &c in s {
-            unsafe {
-                self.write_char(font, c, fg, bg);
+    pub unsafe fn clear_char(&mut self, x: usize, y: usize, width: usize, height: usize, bg: u32) {
+        for py in 0..height {
+            for px in 0..width {
+                self.put_pixel(x + px, y + py, bg);
             }
+        }
+    }
+
+    pub unsafe fn write_str(&mut self, font: &Font, s: &[u8], mut fg: u32, mut bg: u32) {
+        let default_fg = fg;
+        let default_bg = bg;
+
+        let mut i = 0;
+
+        while i < s.len() {
+            if s[i] == 0x1B {
+                if i + 1 < s.len() && s[i + 1] == b'[' {
+                    i += 2;
+
+                    let mut code: u16 = 0;
+
+                    while i < s.len() {
+                        let c = s[i];
+
+                        if c.is_ascii_digit() {
+                            code = code * 10 + (c - b'0') as u16;
+                        } else if c == b'm' {
+                            match code {
+                                0 => {
+                                    fg = default_fg;
+                                    bg = default_bg;
+                                }
+                                n => {
+                                    if let Some(color) = super::Color::ansi_fg(n as u8) {
+                                        fg = color;
+                                    }
+
+                                    if let Some(color) = super::Color::ansi_bg(n as u8) {
+                                        bg = color;
+                                    }
+                                }
+                            }
+
+                            break;
+                        }
+
+                        i += 1;
+                    }
+                }
+            } else {
+                self.write_char(font, s[i], fg, bg);
+            }
+
+            i += 1;
         }
     }
 

@@ -9,6 +9,7 @@ const EFER_SCE: u64 = 1;
 
 pub const SYS_DEBUG: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
+pub const SYS_READ_KEY: u64 = 2;
 
 static mut SYSCALL_STACK: [u8; 4096 * 4] = [0; 4096 * 4];
 
@@ -147,6 +148,8 @@ extern "C" fn syscall_handler(
 
         SYS_WRITE => sys_write(arg1, arg2),
 
+        SYS_READ_KEY => sys_read_key(),
+
         _ => u64::MAX,
     }
 }
@@ -161,4 +164,11 @@ fn sys_write(ptr: u64, len: u64) -> u64 {
     crate::drv::console::write_bytes(bytes);
 
     len
+}
+
+fn sys_read_key() -> u64 {
+    match crate::drv::keyboard::read_char() {
+        Some(c) => c as u64,
+        None => 0,
+    }
 }

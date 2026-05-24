@@ -3,15 +3,22 @@ global _start
 
 section .text
 _start:
-    mov rax, 1          ; SYS_WRITE
-    mov rdi, msg
-    mov rsi, msg_len
+.loop:
+    mov rax, 2        ; SYS_READ_KEY
     syscall
 
-.loop:
+    test rax, rax
+    jz .loop
+
+    mov [buf], al
+
+    mov rax, 1        ; SYS_WRITE
+    mov rdi, buf
+    mov rsi, 1
+    syscall
+
     jmp .loop
 
-section .rodata
-msg:
-    db "hello from userland", 10
-msg_len equ $ - msg
+section .bss
+buf:
+    resb 1
