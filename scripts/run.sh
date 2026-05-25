@@ -6,6 +6,8 @@ qemu-system-x86_64 \
     -m 256M \
     -cdrom wildnix-x86_64.iso \
     -serial stdio \
+    -usb \
+    -device usb-kbd \
     -no-reboot \
     -no-shutdown \
     -vga std

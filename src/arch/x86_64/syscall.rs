@@ -15,6 +15,7 @@ pub const SYS_READ_KEY: u64 = 2;
 pub const SYS_EXIT: u64 = 3;
 
 static mut SYSCALL_STACK: [u8; 4096 * 4] = [0; 4096 * 4];
+static mut USER_RSP_TMP: u64 = 0;
 
 unsafe fn rdmsr(msr: u32) -> u64 {
     let low: u32;
@@ -53,14 +54,14 @@ pub unsafe fn init() {
 
     unsafe {
         wrmsr(IA32_EFER, efer | EFER_SCE);
-        wrmsr(IA32_LSTAR, syscall_entry as u64);
+        wrmsr(IA32_LSTAR, syscall_entry as *const () as u64);
 
-        // GDT:
-        // 0x08 kernel code
-        // 0x10 kernel data
-        // 0x18 user data
-        // 0x20 user code
-        let star = ((0x08u64) << 32) | ((0x18u64) << 48);
+        // STAR encoding for SYSCALL/SYSRET:
+        // - bits 47:32 = kernel CS selector
+        // - bits 63:48 = user selector base used by SYSRET
+        //   (user CS = base + 0x10, user SS = base + 0x08)
+        // With GDT user SS=0x1B and user CS=0x23, base is 0x13.
+        let star = ((0x08u64) << 32) | ((0x13u64) << 48);
         wrmsr(IA32_STAR, star);
 
         // clear IF on syscall entry
@@ -72,8 +73,7 @@ pub unsafe fn init() {
 
 #[unsafe(naked)]
 extern "C" fn syscall_entry() -> ! {
-    unsafe {
-        naked_asm!(
+    naked_asm!(
             // syscall state:
             // rax = syscall num
             // rdi = arg1
@@ -85,15 +85,15 @@ extern "C" fn syscall_entry() -> ! {
             // rcx = user RIP
             // r11 = user RFLAGS
 
-            "mov r12, rsp",
+            "mov [rip + {user_rsp_tmp}], rsp",
 
             "lea rsp, [rip + {stack}]",
             "add rsp, {stack_size}",
             "and rsp, -16",
 
-            "push r12",
             "push rcx",
             "push r11",
+            "sub rsp, 8",
 
             // syscall_handler(num, arg1, arg2, arg3, arg4, arg5, arg6)
             // SysV ABI args:
@@ -117,19 +117,18 @@ extern "C" fn syscall_entry() -> ! {
 
             "call {handler}",
 
+            "add rsp, 8",
             "pop r11",
             "pop rcx",
-            "pop r12",
-
-            "mov rsp, r12",
+            "mov rsp, [rip + {user_rsp_tmp}]",
 
             "sysretq",
 
             stack = sym SYSCALL_STACK,
             stack_size = const 4096 * 4,
+            user_rsp_tmp = sym USER_RSP_TMP,
             handler = sym syscall_handler,
-        );
-    }
+    );
 }
 
 #[no_mangle]
@@ -137,9 +136,9 @@ extern "C" fn syscall_handler(
     num: u64,
     arg1: u64,
     arg2: u64,
-    arg3: u64,
-    arg4: u64,
-    arg5: u64,
+    _arg3: u64,
+    _arg4: u64,
+    _arg5: u64,
 ) -> u64 {
     match num {
         SYS_DEBUG => {
@@ -172,13 +171,13 @@ fn sys_write(ptr: u64, len: u64) -> u64 {
 }
 
 fn sys_read_key() -> u64 {
-    // Block until a key is available from the event queue
+    // Prefer event-driven keyboard queue; enable interrupts briefly and hlt while waiting.
     loop {
         if let Some(c) = crate::drv::keyboard::queue_pop() {
             return c as u64;
         }
-        // Wait for keyboard interrupt
-        unsafe { core::arch::asm!("hlt"); }
+        // Enable IRQs locally, halt until next interrupt, then disable again
+        unsafe { core::arch::asm!("sti; hlt; cli"); }
     }
 }
 

@@ -97,7 +97,7 @@ pub fn init() {
 
 macro_rules! exception_handler {
     ($name:ident, $msg:literal) => {
-        extern "x86-interrupt" fn $name(_frame: &InterruptStackFrame) {
+        extern "x86-interrupt" fn $name(_frame: InterruptStackFrame) {
             unsafe {
                 crate::drv::serial::write(b"EXCEPTION: ");
                 crate::drv::serial::write($msg);
@@ -114,7 +114,7 @@ macro_rules! exception_handler {
 
 macro_rules! exception_handler_err {
     ($name:ident, $msg:literal) => {
-        extern "x86-interrupt" fn $name(_frame: &InterruptStackFrame, _error: u64) {
+        extern "x86-interrupt" fn $name(_frame: InterruptStackFrame, _error: u64) {
             unsafe {
                 crate::drv::serial::write(b"EXCEPTION: ");
                 crate::drv::serial::write($msg);
@@ -184,14 +184,24 @@ extern "x86-interrupt" fn handler_irq1_keyboard(_frame: InterruptStackFrame) {
     unsafe {
         let scancode = crate::drv::keyboard::read_scancode_raw();
         crate::arch::interrupts::pic_eoi(1);
-        
+
+        // Debug: print raw scancode
+        crate::drv::serial::write(b"irq1 raw scancode = ");
+        crate::drv::serial::write_hex(scancode as u64);
+        crate::drv::serial::write(b"\n");
+
         // Ignore key releases (bit 7 set) and extended scancodes
         if scancode == 0xE0 || (scancode & 0x80) != 0 {
             return;
         }
-        
+
         // Convert scancode to ASCII and queue if valid
         if let Some(c) = crate::drv::keyboard::scancode_to_ascii(scancode) {
+            crate::drv::serial::write(b"irq1 ascii = ");
+            crate::drv::serial::write_hex(c as u64);
+            crate::drv::serial::write(b" ('");
+            crate::drv::serial::write(&[c]);
+            crate::drv::serial::write(b"')\n");
             crate::drv::keyboard::queue_push(c);
         }
     }

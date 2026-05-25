@@ -43,6 +43,11 @@ pub fn read_scancode() -> Option<u8> {
     }
 }
 
+// Return the raw controller status port for debugging
+pub fn peek_status() -> u8 {
+    unsafe { inb(STATUS_PORT) }
+}
+
 pub fn scancode_to_ascii(scancode: u8) -> Option<u8> {
     unsafe {
         match scancode {
@@ -89,7 +94,11 @@ pub fn read_char() -> Option<u8> {
         return None;
     }
 
-    // For now, don't filter releases - let scancode_to_ascii handle it
+    // Drop key releases, except shift releases which update modifier state.
+    if (scancode & 0x80) != 0 && scancode != 0xAA && scancode != 0xB6 {
+        return None;
+    }
+
     scancode_to_ascii(scancode)
 }
 
