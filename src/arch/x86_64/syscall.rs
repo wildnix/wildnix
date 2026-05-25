@@ -1,6 +1,6 @@
 use core::arch::{asm, naked_asm};
 
-use crate::println;
+use crate::{VFS, println};
 
 const IA32_EFER: u32 = 0xC000_0080;
 const IA32_STAR: u32 = 0xC000_0081;
@@ -13,6 +13,13 @@ pub const SYS_DEBUG: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
 pub const SYS_READ_KEY: u64 = 2;
 pub const SYS_EXIT: u64 = 3;
+
+pub const SYS_FS_READ: u64 = 10;
+pub const SYS_FS_WRITE: u64 = 11;
+pub const SYS_FS_CREATE: u64 = 12;
+pub const SYS_FS_DELETE: u64 = 13;
+pub const SYS_FS_LIST: u64 = 14;
+pub const SYS_FS_EXISTS: u64 = 15;
 
 static mut SYSCALL_STACK: [u8; 4096 * 4] = [0; 4096 * 4];
 static mut USER_RSP_TMP: u64 = 0;
@@ -136,8 +143,8 @@ extern "C" fn syscall_handler(
     num: u64,
     arg1: u64,
     arg2: u64,
-    _arg3: u64,
-    _arg4: u64,
+    arg3: u64,
+    arg4: u64,
     _arg5: u64,
 ) -> u64 {
     match num {
@@ -149,10 +156,15 @@ extern "C" fn syscall_handler(
         }
 
         SYS_WRITE => sys_write(arg1, arg2),
-
         SYS_READ_KEY => sys_read_key(),
-
         SYS_EXIT => sys_exit(arg1),
+
+        SYS_FS_READ => sys_fs_read(arg1, arg2, arg3, arg4),
+        SYS_FS_WRITE => sys_fs_write(arg1, arg2, arg3, arg4),
+        SYS_FS_CREATE => sys_fs_create(arg1, arg2),
+        SYS_FS_DELETE => sys_fs_delete(arg1, arg2),
+        SYS_FS_LIST => sys_fs_list(arg1, arg2, arg3, arg4),
+        SYS_FS_EXISTS => sys_fs_exists(arg1, arg2),
 
         _ => u64::MAX,
     }
@@ -171,12 +183,12 @@ fn sys_write(ptr: u64, len: u64) -> u64 {
 }
 
 fn sys_read_key() -> u64 {
-    // Prefer event-driven keyboard queue; enable interrupts briefly and hlt while waiting.
     loop {
         if let Some(c) = crate::drv::keyboard::queue_pop() {
             return c as u64;
         }
-        // Enable IRQs locally, halt until next interrupt, then disable again
+
+        // Enable interrupts briefly and halt until the next interrupt then disable
         unsafe { core::arch::asm!("sti; hlt; cli"); }
     }
 }
@@ -191,5 +203,222 @@ fn sys_exit(code: u64) -> u64 {
 
     loop {
         unsafe { core::arch::asm!("hlt"); }
+    }
+}
+
+fn sys_fs_read(
+    path_ptr: u64,
+    path_len: u64,
+    buf_ptr: u64,
+    buf_len: u64,
+) -> u64 {
+    if path_ptr == 0 || path_len == 0 || buf_ptr == 0 || buf_len == 0 {
+        return u64::MAX;
+    }
+
+    let path_bytes = unsafe {
+        core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize)
+    };
+
+    let path = match core::str::from_utf8(path_bytes) {
+        Ok(path) => path,
+        Err(_) => return u64::MAX,
+    };
+
+    let file = unsafe {
+        let vfs = (&raw const crate::VFS).as_ref().unwrap().assume_init_ref();
+
+        match vfs.read_file(path) {
+            Some(data) => data,
+            None => return u64::MAX,
+        }
+    };
+
+    let copy_len = core::cmp::min(file.len(), buf_len as usize);
+
+    let dst = buf_ptr as *mut u8;
+
+    for i in 0..copy_len {
+        unsafe {
+            dst.add(i).write_volatile(file[i]);
+        }
+    }
+
+    copy_len as u64
+}
+
+fn sys_fs_list(
+    path_ptr: u64,
+    path_len: u64,
+    buf_ptr: u64,
+    buf_len: u64,
+) -> u64 {
+    if path_ptr == 0 || path_len == 0 || buf_ptr == 0 || buf_len == 0 {
+        return u64::MAX;
+    }
+
+    let path_bytes = unsafe {
+        core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize)
+    };
+
+    let path = match core::str::from_utf8(path_bytes) {
+        Ok(path) => path,
+        Err(_) => return u64::MAX,
+    };
+
+    let files = unsafe {
+        let vfs = (&raw const crate::VFS)
+            .as_ref()
+            .unwrap()
+            .assume_init_ref();
+
+        vfs.list_dir(path)
+    };
+
+    let dst = buf_ptr as *mut u8;
+    let mut written = 0usize;
+
+    for name in files {
+        let bytes = name.as_bytes();
+
+        for &b in bytes {
+            if written >= buf_len as usize {
+                return written as u64;
+            }
+
+            unsafe {
+                dst.add(written).write_volatile(b);
+            }
+
+            written += 1;
+        }
+
+        if written >= buf_len as usize {
+            return written as u64;
+        }
+
+        unsafe {
+            dst.add(written).write_volatile(b'\n');
+        }
+
+        written += 1;
+    }
+
+    written as u64
+}
+
+fn user_str<'a>(ptr: u64, len: u64) -> Result<&'a str, u64> {
+    if ptr == 0 || len == 0 {
+        return Err(u64::MAX);
+    }
+
+    let bytes = unsafe {
+        core::slice::from_raw_parts(ptr as *const u8, len as usize)
+    };
+
+    core::str::from_utf8(bytes).map_err(|_| u64::MAX)
+}
+
+fn user_bytes<'a>(ptr: u64, len: u64) -> Result<&'a [u8], u64> {
+    if ptr == 0 || len == 0 {
+        return Err(u64::MAX);
+    }
+
+    Ok(unsafe {
+        core::slice::from_raw_parts(ptr as *const u8, len as usize)
+    })
+}
+
+fn sys_fs_write(
+    path_ptr: u64,
+    path_len: u64,
+    data_ptr: u64,
+    data_len: u64,
+) -> u64 {
+    let path = match user_str(path_ptr, path_len) {
+        Ok(path) => path,
+        Err(e) => return e,
+    };
+
+    let data = match user_bytes(data_ptr, data_len) {
+        Ok(data) => data,
+        Err(e) => return e,
+    };
+
+    unsafe {
+        let vfs = (&raw mut VFS)
+            .as_mut()
+            .unwrap()
+            .assume_init_mut();
+
+        if !vfs.exists(path) {
+            vfs.create_file(path);
+        }
+
+        if vfs.write_file(path, data) {
+            data_len
+        } else {
+            u64::MAX
+        }
+    }
+}
+
+fn sys_fs_create(path_ptr: u64, path_len: u64) -> u64 {
+    let path = match user_str(path_ptr, path_len) {
+        Ok(path) => path,
+        Err(e) => return e,
+    };
+
+    unsafe {
+        let vfs = (&raw mut VFS)
+            .as_mut()
+            .unwrap()
+            .assume_init_mut();
+
+        if vfs.create_file(path) {
+            0
+        } else {
+            u64::MAX
+        }
+    }
+}
+
+fn sys_fs_delete(path_ptr: u64, path_len: u64) -> u64 {
+    let path = match user_str(path_ptr, path_len) {
+        Ok(path) => path,
+        Err(e) => return e,
+    };
+
+    unsafe {
+        let vfs = (&raw mut VFS)
+            .as_mut()
+            .unwrap()
+            .assume_init_mut();
+
+        if vfs.remove(path) {
+            0
+        } else {
+            u64::MAX
+        }
+    }
+}
+
+fn sys_fs_exists(path_ptr: u64, path_len: u64) -> u64 {
+    let path = match user_str(path_ptr, path_len) {
+        Ok(path) => path,
+        Err(e) => return e,
+    };
+
+    unsafe {
+        let vfs = (&raw const VFS)
+            .as_ref()
+            .unwrap()
+            .assume_init_ref();
+
+        if vfs.exists(path) {
+            1
+        } else {
+            0
+        }
     }
 }

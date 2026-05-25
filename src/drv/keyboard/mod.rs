@@ -2,34 +2,16 @@ use crate::drv::serial::inb;
 
 const DATA_PORT: u16 = 0x60;
 const STATUS_PORT: u16 = 0x64;
-const KEYBOARD_QUEUE_SIZE: usize = 256;
 
 static mut SHIFT: bool = false;
-static mut KEYBOARD_QUEUE: [u8; KEYBOARD_QUEUE_SIZE] = [0u8; KEYBOARD_QUEUE_SIZE];
-static mut KEYBOARD_QUEUE_HEAD: usize = 0;
-static mut KEYBOARD_QUEUE_TAIL: usize = 0;
+const QUEUE_SIZE: usize = 256;
 
-pub fn queue_push(c: u8) {
-    unsafe {
-        let next_tail = (KEYBOARD_QUEUE_TAIL + 1) % KEYBOARD_QUEUE_SIZE;
-        if next_tail != KEYBOARD_QUEUE_HEAD {
-            KEYBOARD_QUEUE[KEYBOARD_QUEUE_TAIL] = c;
-            KEYBOARD_QUEUE_TAIL = next_tail;
-        }
-    }
-}
-
-pub fn queue_pop() -> Option<u8> {
-    unsafe {
-        if KEYBOARD_QUEUE_HEAD == KEYBOARD_QUEUE_TAIL {
-            None
-        } else {
-            let c = KEYBOARD_QUEUE[KEYBOARD_QUEUE_HEAD];
-            KEYBOARD_QUEUE_HEAD = (KEYBOARD_QUEUE_HEAD + 1) % KEYBOARD_QUEUE_SIZE;
-            Some(c)
-        }
-    }
-}
+static mut QUEUE: [u8; QUEUE_SIZE] = [0; QUEUE_SIZE];
+static mut HEAD: usize = 0;
+static mut TAIL: usize = 0;
+static mut LAST_MAKE: u8 = 0;
+static mut LAST_PUBLISHED: u8 = 0;
+static mut REPEAT_BLOCK: u8 = 0;
 
 pub fn read_scancode() -> Option<u8> {
     unsafe {
@@ -43,9 +25,90 @@ pub fn read_scancode() -> Option<u8> {
     }
 }
 
-// Return the raw controller status port for debugging
-pub fn peek_status() -> u8 {
-    unsafe { inb(STATUS_PORT) }
+pub fn queue_push(c: u8) {
+    if c == 0 {
+        return;
+    }
+
+    unsafe {
+        let next = (HEAD + 1) % QUEUE_SIZE;
+
+        if next != TAIL {
+            QUEUE[HEAD] = c;
+            HEAD = next;
+        }
+    }
+}
+
+pub fn queue_pop() -> Option<u8> {
+    unsafe {
+        if HEAD == TAIL {
+            return None;
+        }
+
+        let c = QUEUE[TAIL];
+        QUEUE[TAIL] = 0;
+        TAIL = (TAIL + 1) % QUEUE_SIZE;
+
+        if c == 0 {
+            None
+        } else {
+            Some(c)
+        }
+    }
+}
+
+pub unsafe fn handle_irq() {
+    let sc = inb(DATA_PORT);
+
+    // Ignore extended prefix
+    if sc == 0xE0 {
+        return;
+    }
+
+    // Shift release updates modifier state
+    if sc == 0xAA || sc == 0xB6 {
+        let _ = scancode_to_ascii(sc);
+        return;
+    }
+
+    // Handle key releases: clear last make and return
+    if sc & 0x80 != 0 {
+        let base = sc & 0x7F;
+        unsafe {
+            if LAST_MAKE == base {
+                LAST_MAKE = 0;
+            }
+        }
+        return;
+    }
+
+    // Suppress duplicate make scancodes until a release is seen
+    unsafe {
+        if LAST_MAKE != 0 && LAST_MAKE == sc {
+            return;
+        }
+    }
+
+    if let Some(c) = scancode_to_ascii(sc) {
+        // mapped ASCII available in `c`
+
+        // Rate-limit repeated characters: if same as last published, use cooldown
+        unsafe {
+            if LAST_PUBLISHED == c {
+                if REPEAT_BLOCK > 0 {
+                    REPEAT_BLOCK = REPEAT_BLOCK.saturating_sub(1);
+                    return;
+                }
+            }
+
+            LAST_PUBLISHED = c;
+            REPEAT_BLOCK = 10; // suppress next 10 repeats
+            LAST_MAKE = sc;
+        }
+
+        queue_push(c);
+    }
 }
 
 pub fn scancode_to_ascii(scancode: u8) -> Option<u8> {
@@ -215,19 +278,6 @@ static SCANCODE_SET_1_SHIFTED: [u8; 128] = {
 
     map
 };
-
-pub unsafe fn handle_irq() {
-    let scancode = read_scancode();
-
-    crate::drv::serial::write(b"irq1 scancode = ");
-
-    if let Some(sc) = scancode {
-        crate::drv::serial::write_hex(sc as u64);
-        crate::drv::serial::write(b"\n");
-    } else {
-        crate::drv::serial::write(b"none\n");
-    }
-}
 
 pub unsafe fn read_scancode_raw() -> u8 {
     inb(DATA_PORT)

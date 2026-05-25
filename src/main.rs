@@ -19,9 +19,12 @@ use limine::request::{ExecutableAddressRequest, FramebufferRequest, HhdmRequest,
 use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
 
 use crate::drv::graphics::Color;
+use core::mem::MaybeUninit;
 
 static FONT_DATA: &[u8] = include_bytes!("../assets/ter-u16n.psf");
 static USER_ELF: &[u8] = include_bytes!("../build/userland/init.elf");
+
+static mut VFS: MaybeUninit<drv::fs::vfs::Vfs> = MaybeUninit::uninit();
 
 #[used]
 #[unsafe(link_section = ".limine_reqs_start")]
